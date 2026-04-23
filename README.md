@@ -20,13 +20,13 @@ This project is built as a monorepo containing a decoupled frontend and backend.
 
 ## 📂 Project Structure
 
-\`\`\`text
-QueryEase/
-├── backend/       # FastAPI server, AI agents, database connectors
-├── frontend/      # Vite + React web application
-├── README.md      # Project documentation
-└── .gitignore     # Git ignore rules
-\`\`\`
+
+QueryEase/\
+├── backend/       # FastAPI server, AI agents, database connectors \
+├── frontend/      # Vite + React web application \
+├── README.md      # Project documentation \
+└── .gitignore     # Git ignore rules 
+
 
 ## 🚀 Getting Started (Development)
 
