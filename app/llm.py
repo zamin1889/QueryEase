@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
+import os
+
+from dotenv import load_dotenv
 import requests
 from requests import Response
 from requests.exceptions import RequestException
 
 OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "queryease-sql"
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 30.0
+
+load_dotenv()
+
+
+def _get_timeout_seconds() -> float:
+	"""Resolve the Ollama request timeout in seconds.
+
+	Returns:
+		Timeout value in seconds. Defaults if missing or invalid.
+	"""
+
+	raw_timeout = os.getenv("OLLAMA_TIMEOUT_SECONDS", "").strip()
+	if not raw_timeout:
+		return DEFAULT_OLLAMA_TIMEOUT_SECONDS
+
+	try:
+		parsed = float(raw_timeout)
+	except ValueError:
+		return DEFAULT_OLLAMA_TIMEOUT_SECONDS
+
+	if parsed <= 0:
+		return DEFAULT_OLLAMA_TIMEOUT_SECONDS
+
+	return parsed
 
 
 def _build_prompt(schema_context: str, user_query: str) -> str:
@@ -78,7 +106,11 @@ def generate_sql(user_query: str, schema_context: str) -> str:
 	}
 
 	try:
-		response = requests.post(OLLAMA_GENERATE_URL, json=payload, timeout=30)
+		response = requests.post(
+			OLLAMA_GENERATE_URL,
+			json=payload,
+			timeout=_get_timeout_seconds(),
+		)
 		response.raise_for_status()
 	except RequestException as exc:
 		raise RuntimeError(
