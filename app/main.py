@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from app.database import get_engine, get_live_schema
 from app.llm import generate_sql
 from app.schemas import QueryErrorResponse, QueryRequest, QuerySuccessResponse
+from app.sanitizer import sanitize_sql
 
 app = FastAPI(title="QueryEase API", version="0.1.0")
 
@@ -63,16 +64,31 @@ def query_text_to_sql(
         engine = get_engine()
         schema_context = get_live_schema(engine)
         generated_sql = generate_sql(payload.user_query, schema_context)
+        try:
+            safe_sql = sanitize_sql(generated_sql)
+        except ValueError as exc:
+            error_response = QueryErrorResponse(
+                error_code="SECURITY_VIOLATION",
+                error_message=str(exc),
+                details={"reason": str(exc)},
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=error_response.model_dump(),
+            ) from exc
 
-        return QuerySuccessResponse(
+        return [
+            QuerySuccessResponse(
                 status="success",
-                generated_sql=generated_sql,
+                generated_sql=safe_sql,
                 execution_time_ms=0,
                 retries_used=0,
                 data=[],
                 inferred_chart_type="table",
-                )
-    
+            )
+        ]
+    except HTTPException:
+        raise
     except Exception as exc:
         error_response = QueryErrorResponse(
             error_code="INTERNAL_SERVER_ERROR",
