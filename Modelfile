@@ -1,0 +1,19 @@
+FROM ./queryease-llama3-sql-unsloth.Q4_K_M.gguf
+
+# strict deterministic parameters
+PARAMETER temperature 0.1
+PARAMETER num_ctx 2048
+
+# Tell the model when to stop generating (Llama 3 standard tokens)
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end_of_text|>"
+PARAMETER stop "</s>"
+
+# Enforce the exact structure we used during Colab fine-tuning
+TEMPLATE """You are QueryEase, an expert PostgreSQL AI. 
+Write a valid SQL query to answer the user's question based strictly on the provided schema.
+
+{{ .Prompt }}
+
+SQL:
+"""
