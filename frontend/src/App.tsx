@@ -1,44 +1,124 @@
-import { type FormEvent, useState } from "react"
-import { Moon, Send, Sun } from "lucide-react"
+import { type ChangeEvent, type FormEvent, useRef, useState } from "react"
+import axios from "axios"
+import { Loader2, Moon, Send, Sun } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
+type QuerySuccessResponse = {
+	status: string
+	generated_sql: string
+	execution_time_ms: number
+	retries_used: number
+	data: Array<Record<string, unknown>>
+	inferred_chart_type: string
+}
+
 type ChatMessage = {
 	id: string
-	role: "user" | "ai"
+	role: "user" | "assistant"
 	content: string
+	sql?: string
+	data?: Array<Record<string, unknown>>
 }
 
 const initialMessages: ChatMessage[] = [
 	{
 		id: "welcome",
-		role: "ai",
+		role: "assistant",
 		content:
 			"Hello! I am QueryEase. What would you like to know about your database?",
 	},
 ]
 
+const formatCellValue = (value: unknown) => {
+	if (value === null || value === undefined) return ""
+	if (typeof value === "object") return JSON.stringify(value)
+	return String(value)
+}
+
 export default function App() {
 	const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
 	const [draft, setDraft] = useState("")
 	const [isDark, setIsDark] = useState(false)
+	const [isSending, setIsSending] = useState(false)
+	const sessionIdRef = useRef(
+		typeof crypto !== "undefined" && "randomUUID" in crypto
+			? crypto.randomUUID()
+			: `session-${Date.now()}`
+	)
+	const tenantId = "tenant-001"
 
-	const handleSend = (event: FormEvent<HTMLFormElement>) => {
+	const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault()
 		const trimmed = draft.trim()
-		if (!trimmed) return
+		if (!trimmed || isSending) return
 
-		setMessages((current) => [
-			...current,
-			{
-				id: `user-${Date.now()}`,
-				role: "user",
-				content: trimmed,
-			},
-		])
+		const userMessage: ChatMessage = {
+			id: `user-${Date.now()}`,
+			role: "user",
+			content: trimmed,
+		}
+
+		setMessages((current) => [...current, userMessage])
 		setDraft("")
+		setIsSending(true)
+
+		try {
+			const apiBaseUrl = import.meta.env.VITE_API_URL
+			if (!apiBaseUrl) {
+				throw new Error("VITE_API_URL is not configured.")
+			}
+
+			const response = await axios.post<QuerySuccessResponse[]>(
+				`${apiBaseUrl}/api/v1/query`,
+				{
+					user_query: trimmed,
+					session_id: sessionIdRef.current,
+					tenant_id: tenantId,
+				}
+			)
+
+			const payload = Array.isArray(response.data)
+				? response.data[0]
+				: response.data
+
+			if (!payload) {
+				throw new Error("No response payload returned by the API.")
+			}
+
+			const aiMessage: ChatMessage = {
+				id: `assistant-${Date.now()}`,
+				role: "assistant",
+				content: payload.data.length
+					? "Here are the results."
+					: "Query executed successfully.",
+				sql: payload.generated_sql,
+				data: payload.data,
+			}
+
+			setMessages((current) => [...current, aiMessage])
+		} catch (error) {
+			const message = axios.isAxiosError(error)
+				? error.response?.data?.error_message ??
+						error.response?.data?.detail?.error_message ??
+						error.message
+				: error instanceof Error
+					? error.message
+					: "Unexpected error."
+
+			setMessages((current) => [
+				...current,
+				{
+					id: `assistant-${Date.now()}`,
+					role: "assistant",
+					content: `Request failed: ${message}`,
+				},
+			])
+		} finally {
+			setIsSending(false)
+		}
 	}
 
 	return (
@@ -105,6 +185,10 @@ export default function App() {
 							<div className="flex flex-col gap-4 p-6">
 								{messages.map((message) => {
 									const isUser = message.role === "user"
+									const columns =
+										!isUser && message.data?.length
+											? Object.keys(message.data[0] ?? {})
+											: []
 
 									return (
 										<div
@@ -114,16 +198,58 @@ export default function App() {
 											}`}
 										>
 											<div
+												className={`flex w-full max-w-[85%] flex-col gap-3 ${
+													isUser ? "items-end" : "items-start"
+												}`}
+											>
+												<div
 													className={`max-w-[75%] rounded-2xl border px-4 py-3 text-sm leading-relaxed shadow-sm transition-transform duration-300 hover:-translate-y-0.5 ${
 														isUser
 															? "border-zinc-200 bg-zinc-100/80 text-zinc-700 dark:border-zinc-700/70 dark:bg-zinc-800/70 dark:text-zinc-100"
 															: "border-zinc-100 bg-white/90 text-zinc-800 dark:border-zinc-800/80 dark:bg-zinc-900/70 dark:text-zinc-100"
 													}`}
-											>
+												>
 													<p className="text-[0.65rem] uppercase tracking-[0.3em] text-zinc-400 dark:text-zinc-500">
-													{isUser ? "You" : "QueryEase"}
-												</p>
-												<p className="mt-2 text-sm">{message.content}</p>
+														{isUser ? "You" : "Assistant"}
+													</p>
+													<p className="mt-2 text-sm">{message.content}</p>
+													{!isUser && message.sql ? (
+														<pre className="mt-3 whitespace-pre-wrap rounded-xl border border-zinc-200/80 bg-white/80 p-3 text-xs text-zinc-600 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200">
+															{message.sql}
+														</pre>
+													) : null}
+														{!isUser && message.data?.length && columns.length ? (
+															<div className="mt-3 w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-white/80 text-xs text-zinc-700 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200">
+																<div className="max-h-56 overflow-auto">
+																	<table className="w-full text-left">
+																		<thead className="bg-zinc-50/80 text-[0.65rem] uppercase tracking-[0.2em] text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+																			<tr>
+																				{columns.map((column) => (
+																					<th key={column} className="px-3 py-2 font-semibold">
+																						{column}
+																					</th>
+																				))}
+																			</tr>
+																		</thead>
+																		<tbody>
+																			{message.data.map((row, rowIndex) => (
+																				<tr
+																					key={`row-${message.id}-${rowIndex}`}
+																					className="border-b border-zinc-200/70 last:border-0 dark:border-zinc-800/70"
+																				>
+																					{columns.map((column) => (
+																						<td key={`${rowIndex}-${column}`} className="px-3 py-2">
+																							{formatCellValue(row[column])}
+																						</td>
+																					))}
+																				</tr>
+																			))}
+																		</tbody>
+																	</table>
+																</div>
+															</div>
+														) : null}
+												</div>
 											</div>
 										</div>
 									)
@@ -132,23 +258,32 @@ export default function App() {
 						</ScrollArea>
 
 						<form
-							onSubmit={handleSend}
+							onSubmit={handleSendMessage}
+							aria-busy={isSending}
 							className="sticky bottom-6 flex w-full flex-col gap-3 rounded-2xl border border-zinc-100 bg-white/90 p-4 shadow-xl backdrop-blur-md transition-transform duration-300 hover:-translate-y-0.5 dark:border-zinc-800/80 dark:bg-zinc-950/80"
 						>
 							<div className="flex items-center gap-3">
 								<Input
 									value={draft}
-									onChange={(event) => setDraft(event.target.value)}
+									onChange={(event: ChangeEvent<HTMLInputElement>) =>
+										setDraft(event.target.value)
+									}
 									placeholder="Ask a question about your data..."
-									className="h-12 rounded-xl border-zinc-200 bg-white/80 text-base text-zinc-800 shadow-sm placeholder:text-zinc-400 focus-visible:ring-zinc-900/10 dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus-visible:ring-zinc-100/10"
+									disabled={isSending}
+									className="h-12 rounded-xl border-zinc-200 bg-white/80 text-base text-zinc-800 shadow-sm placeholder:text-zinc-400 focus-visible:ring-zinc-900/10 disabled:cursor-not-allowed disabled:opacity-70 dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus-visible:ring-zinc-100/10"
 								/>
 								<Button
 									type="submit"
 									size="icon"
-									className="h-12 w-12 rounded-full bg-zinc-900 text-white shadow-md hover:bg-zinc-800 dark:border dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+									disabled={isSending || !draft.trim()}
+									className="h-12 w-12 rounded-full bg-zinc-900 text-white shadow-md hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70 dark:border dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
 									aria-label="Send message"
 								>
-									<Send className="size-4" />
+										{isSending ? (
+											<Loader2 className="size-4 animate-spin" />
+										) : (
+											<Send className="size-4" />
+										)}
 								</Button>
 							</div>
 							<div className="flex items-center justify-between text-xs text-zinc-400 dark:text-zinc-500">
