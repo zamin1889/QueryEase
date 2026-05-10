@@ -5,6 +5,14 @@ import { Loader2, Moon, Send, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table"
 
 type QuerySuccessResponse = {
 	status: string
@@ -19,8 +27,9 @@ type ChatMessage = {
 	id: string
 	role: "user" | "assistant"
 	content: string
-	sql?: string
+	generated_sql?: string
 	data?: Array<Record<string, unknown>>
+	raw_response?: unknown // ADDED FOR DEBUGGING
 }
 
 const initialMessages: ChatMessage[] = [
@@ -91,11 +100,12 @@ export default function App() {
 			const aiMessage: ChatMessage = {
 				id: `assistant-${Date.now()}`,
 				role: "assistant",
-				content: payload.data.length
+				content: payload.data && payload.data.length
 					? "Here are the results."
 					: "Query executed successfully.",
-				sql: payload.generated_sql,
+				generated_sql: payload.generated_sql,
 				data: payload.data,
+				raw_response: response.data, // CAPTURING EXACT API OUTPUT
 			}
 
 			setMessages((current) => [...current, aiMessage])
@@ -183,16 +193,17 @@ export default function App() {
 					<main className="flex min-h-0 flex-1 flex-col gap-6">
 						<ScrollArea className="flex-1 rounded-3xl border border-zinc-100 bg-white/70 shadow-sm backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md dark:border-zinc-800/80 dark:bg-zinc-950/70 dark:shadow-[0_0_30px_rgba(251,146,60,0.12)]">
 							<div className="flex flex-col gap-4 p-6">
-								{messages.map((message) => {
-									const isUser = message.role === "user"
-									const columns =
-										!isUser && message.data?.length
-											? Object.keys(message.data[0] ?? {})
-											: []
+								{messages.map((msg) => {
+									const isUser = msg.role === "user"
+									const hasData = !isUser && Array.isArray(msg.data)
+									const hasRows = Boolean(msg.data?.length)
+									const columns = hasRows
+										? Object.keys(msg.data?.[0] ?? {})
+										: []
 
 									return (
 										<div
-											key={message.id}
+											key={msg.id}
 											className={`flex ${
 												isUser ? "justify-end" : "justify-start"
 											}`}
@@ -203,7 +214,7 @@ export default function App() {
 												}`}
 											>
 												<div
-													className={`max-w-[75%] rounded-2xl border px-4 py-3 text-sm leading-relaxed shadow-sm transition-transform duration-300 hover:-translate-y-0.5 ${
+													className={`max-w-[75%] w-full rounded-2xl border px-4 py-3 text-sm leading-relaxed shadow-sm transition-transform duration-300 hover:-translate-y-0.5 ${
 														isUser
 															? "border-zinc-200 bg-zinc-100/80 text-zinc-700 dark:border-zinc-700/70 dark:bg-zinc-800/70 dark:text-zinc-100"
 															: "border-zinc-100 bg-white/90 text-zinc-800 dark:border-zinc-800/80 dark:bg-zinc-900/70 dark:text-zinc-100"
@@ -212,43 +223,50 @@ export default function App() {
 													<p className="text-[0.65rem] uppercase tracking-[0.3em] text-zinc-400 dark:text-zinc-500">
 														{isUser ? "You" : "Assistant"}
 													</p>
-													<p className="mt-2 text-sm">{message.content}</p>
-													{!isUser && message.sql ? (
-														<pre className="mt-3 whitespace-pre-wrap rounded-xl border border-zinc-200/80 bg-white/80 p-3 text-xs text-zinc-600 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200">
-															{message.sql}
-														</pre>
+													<p className="mt-2 text-sm">{msg.content}</p>
+													
+													{!isUser && msg.generated_sql ? (
+														<details className="mt-3">
+															<summary className="cursor-pointer text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
+																View SQL
+															</summary>
+															<pre className="mt-2 whitespace-pre-wrap rounded-xl border border-zinc-200/80 bg-white/80 p-3 text-xs text-zinc-600 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200">
+																{msg.generated_sql}
+															</pre>
+														</details>
 													) : null}
-														{!isUser && message.data?.length && columns.length ? (
-															<div className="mt-3 w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-white/80 text-xs text-zinc-700 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200">
-																<div className="max-h-56 overflow-auto">
-																	<table className="w-full text-left">
-																		<thead className="bg-zinc-50/80 text-[0.65rem] uppercase tracking-[0.2em] text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
-																			<tr>
-																				{columns.map((column) => (
-																					<th key={column} className="px-3 py-2 font-semibold">
-																						{column}
-																					</th>
-																				))}
-																			</tr>
-																		</thead>
-																		<tbody>
-																			{message.data.map((row, rowIndex) => (
-																				<tr
-																					key={`row-${message.id}-${rowIndex}`}
-																					className="border-b border-zinc-200/70 last:border-0 dark:border-zinc-800/70"
-																				>
-																					{columns.map((column) => (
-																						<td key={`${rowIndex}-${column}`} className="px-3 py-2">
-																							{formatCellValue(row[column])}
-																						</td>
-																					))}
-																				</tr>
+
+													{hasData && msg.data?.length === 0 ? (
+														<p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+															No results found in database.
+														</p>
+													) : null}
+													{hasRows && columns.length ? (
+														<div className="mt-3 w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-white/80 text-xs text-zinc-700 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200">
+															<div className="max-h-56 overflow-auto">
+																<Table>
+																	<TableHeader>
+																		<TableRow>
+																			{columns.map((column) => (
+																				<TableHead key={column}>{column}</TableHead>
 																			))}
-																		</tbody>
-																	</table>
-																</div>
+																		</TableRow>
+																	</TableHeader>
+																	<TableBody>
+																		{msg.data?.map((row, rowIndex) => (
+																			<TableRow key={`row-${msg.id}-${rowIndex}`}>
+																				{columns.map((column) => (
+																					<TableCell key={`${rowIndex}-${column}`}>
+																						{formatCellValue(row[column])}
+																					</TableCell>
+																				))}
+																			</TableRow>
+																		))}
+																	</TableBody>
+																</Table>
 															</div>
-														) : null}
+														</div>
+													) : null}
 												</div>
 											</div>
 										</div>

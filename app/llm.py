@@ -7,11 +7,11 @@ import os
 from dotenv import load_dotenv
 import requests
 from requests import Response
-from requests.exceptions import RequestException
+from requests.exceptions import ReadTimeout, RequestException
 
 OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "queryease-sql"
-DEFAULT_OLLAMA_TIMEOUT_SECONDS = 30.0
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 120.0
 
 load_dotenv()
 
@@ -105,17 +105,29 @@ def generate_sql(user_query: str, schema_context: str) -> str:
 		"stream": False,
 	}
 
-	try:
-		response = requests.post(
-			OLLAMA_GENERATE_URL,
-			json=payload,
-			timeout=_get_timeout_seconds(),
-		)
-		response.raise_for_status()
-	except RequestException as exc:
-		raise RuntimeError(
-			"Failed to reach Ollama at http://localhost:11434. "
-			"Ensure the service is running."
-		) from exc
+	timeout_seconds = max(120.0, _get_timeout_seconds())
+
+	for attempt in range(2):
+		try:
+			response = requests.post(
+				OLLAMA_GENERATE_URL,
+				json=payload,
+				timeout=timeout_seconds,
+			)
+			response.raise_for_status()
+			break
+		except ReadTimeout as exc:
+			if attempt == 0:
+				print("Ollama cold start detected, retrying...")
+				continue
+			raise RuntimeError(
+				"Ollama request timed out. "
+				"Check the service and try again."
+			) from exc
+		except RequestException as exc:
+			raise RuntimeError(
+				"Failed to reach Ollama at http://localhost:11434. "
+				"Ensure the service is running."
+			) from exc
 
 	return _parse_ollama_response(response)
