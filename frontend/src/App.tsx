@@ -4,7 +4,14 @@ import { Loader2, Moon, Send, Sun, BarChart3 } from "lucide-react"
 import {
     Area,
     AreaChart,
+    Bar,
+    BarChart,
     CartesianGrid,
+    Cell,
+    Line,
+    LineChart,
+    Pie,
+    PieChart,
     ResponsiveContainer,
     Tooltip as RechartsTooltip,
     XAxis,
@@ -210,60 +217,13 @@ export default function App() {
     const renderDataVisualization = (msg: ChatMessage) => {
         if (!msg.data || msg.data.length === 0) return null
 
-        const columns = Object.keys(msg.data[0])
-        
-        // If it's a chart type and we have at least 2 columns
-        if (msg.chart_type !== "table" && columns.length >= 2) {
-            
-            // Dynamically find the numeric column (Y-Axis) and string column (X-Axis)
-            // because SQL might return them in any order
-            const numericColumns = columns.filter(col => {
-                const val = msg.data![0][col];
-                // Check if it's a number or a string that can be parsed as a valid number (e.g. from PostgreSQL Decimals)
-                return typeof val === 'number' || (!isNaN(Number(val)) && val !== null && val !== '');
-            });
-            const stringColumns = columns.filter(col => !numericColumns.includes(col));
-
-            if (numericColumns.length > 0) {
-                const yAxisKey = numericColumns[0];
-                const xAxisKey = stringColumns.length > 0 ? stringColumns[0] : (columns.find(c => c !== yAxisKey) || columns[0]);
-
-                // Ensure data is formatted as actual Numbers for Recharts
-                const chartData = msg.data.map(row => ({
-                    ...row,
-                    [yAxisKey]: Number(row[yAxisKey])
-                }));
-
-                return (
-                    <div className="mt-4 h-64 w-full rounded-2xl border border-zinc-200/80 bg-white/60 p-4 pt-6 shadow-sm backdrop-blur-md dark:border-zinc-700/50 dark:bg-zinc-900/40">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                                <defs>
-                                    <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.4} />
-                                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" />
-                                <XAxis dataKey={xAxisKey} axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" dy={10} />
-                                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" />
-                                <RechartsTooltip content={<CustomTooltip />} />
-                                <Area type="monotone" dataKey={yAxisKey} stroke="#0ea5e9" strokeWidth={3} fillOpacity={1} fill="url(#colorGradient)" />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </div>
-                )
-            }
-        }
-
-        // Fallback to Table
-        return (
+        const tableView = (
             <div className="mt-3 w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-white/80 text-xs text-zinc-700 shadow-sm dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200">
                 <div className="max-h-56 overflow-auto">
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                {columns.map((column) => (
+                                {Object.keys(msg.data[0]).map((column) => (
                                     <TableHead key={column}>{column}</TableHead>
                                 ))}
                             </TableRow>
@@ -271,7 +231,7 @@ export default function App() {
                         <TableBody>
                             {msg.data?.map((row, rowIndex) => (
                                 <TableRow key={`row-${msg.id}-${rowIndex}`}>
-                                    {columns.map((column) => (
+                                    {Object.keys(msg.data![0]).map((column) => (
                                         <TableCell key={`${rowIndex}-${column}`}>
                                             {formatCellValue(row[column])}
                                         </TableCell>
@@ -283,6 +243,96 @@ export default function App() {
                 </div>
             </div>
         )
+
+        if (msg.data.length > 50) return tableView
+
+        const chartWrapperClass =
+            "mt-3 h-56 w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-white/80 p-3 shadow-sm backdrop-blur-md dark:border-zinc-700/70 dark:bg-zinc-900/70"
+
+        const columns = Object.keys(msg.data[0])
+
+        const toNumber = (value: unknown) => {
+            if (value === null || value === undefined) return NaN
+            if (typeof value === "number") return value
+            if (typeof value === "string" && value.trim() !== "") return Number(value)
+            return Number(value)
+        }
+
+        const isNumberLike = (value: unknown) => !Number.isNaN(toNumber(value))
+
+        const numericColumns = columns.filter((column) =>
+            msg.data!.some((row) => isNumberLike(row[column]))
+        )
+        const stringColumns = columns.filter((column) => !numericColumns.includes(column))
+
+        if (numericColumns.length === 0 || stringColumns.length === 0) return tableView
+        
+        const yAxisKey = numericColumns[0]
+        const xAxisKey = stringColumns[0]
+
+        const chartData = msg.data.map((row) => ({
+            ...row,
+            [yAxisKey]: toNumber(row[yAxisKey]),
+        }))
+
+        if (msg.data.length <= 5 && numericColumns.length === 1 && stringColumns.length === 1 && columns.length === 2) {
+            const pieColors = ["#0ea5e9", "#14b8a6", "#f97316", "#f43f5e", "#a855f7", "#22c55e"]
+
+            return (
+                <div className={chartWrapperClass}>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                            <RechartsTooltip content={<CustomTooltip />} />
+                            <Pie data={chartData} dataKey={yAxisKey} nameKey={xAxisKey} cx="50%" cy="50%" outerRadius={80}>
+                                {chartData.map((entry, index) => (
+                                    <Cell key={`cell-${String(entry[xAxisKey])}-${index}`} fill={pieColors[index % pieColors.length]} />
+                                ))}
+                            </Pie>
+                        </PieChart>
+                    </ResponsiveContainer>
+                </div>
+            )
+        }
+
+        if (msg.data.length >= 6 && msg.data.length <= 15) {
+            return (
+                <div className={chartWrapperClass}>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" />
+                            <XAxis dataKey={xAxisKey} axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" dy={10} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" />
+                            <RechartsTooltip content={<CustomTooltip />} />
+                            <Bar dataKey={yAxisKey} fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
+            )
+        }
+
+        if (msg.data.length > 15 && msg.data.length <= 50) {
+            return (
+                <div className={chartWrapperClass}>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                            <defs>
+                                <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.4} />
+                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" />
+                            <XAxis dataKey={xAxisKey} axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" dy={10} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" />
+                            <RechartsTooltip content={<CustomTooltip />} />
+                            <Area type="monotone" dataKey={yAxisKey} stroke="#0ea5e9" strokeWidth={3} fillOpacity={1} fill="url(#colorGradient)" />
+                        </AreaChart>
+                    </ResponsiveContainer>
+                </div>
+            )
+        }
+
+        return tableView
     }
 
     if (isSessionLoading) {
