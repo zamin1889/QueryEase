@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useRef, useState } from "react"
+import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react"
 import axios from "axios"
 import { Loader2, Moon, Send, Sun, BarChart3 } from "lucide-react"
 import {
@@ -12,6 +12,7 @@ import {
 } from "recharts"
 
 import { Button } from "@/components/ui/button"
+import Auth from "@/components/Auth"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -22,6 +23,9 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table"
+import type { Session } from "@supabase/supabase-js"
+
+import { supabase } from "@/lib/supabase"
 
 type QuerySuccessResponse = {
 	status: string
@@ -78,12 +82,48 @@ export default function App() {
 	const [draft, setDraft] = useState("")
 	const [isDark, setIsDark] = useState(false)
 	const [isSending, setIsSending] = useState(false)
+	const [session, setSession] = useState<Session | null>(null)
+	const [isSessionLoading, setIsSessionLoading] = useState(true)
 	const sessionIdRef = useRef(
 		typeof crypto !== "undefined" && "randomUUID" in crypto
 			? crypto.randomUUID()
 			: `session-${Date.now()}`
 	)
 	const tenantId = "tenant-001"
+
+	useEffect(() => {
+		let isMounted = true
+
+		const loadSession = async () => {
+			const { data, error } = await supabase.auth.getSession()
+			if (!isMounted) return
+			if (error) {
+				setSession(null)
+			} else {
+				setSession(data.session ?? null)
+			}
+			setIsSessionLoading(false)
+		}
+
+		loadSession()
+
+		const { data: authListener } = supabase.auth.onAuthStateChange(
+			(_event, newSession) => {
+				if (!isMounted) return
+				setSession(newSession)
+				setIsSessionLoading(false)
+			}
+		)
+
+		return () => {
+			isMounted = false
+			authListener.subscription.unsubscribe()
+		}
+	}, [])
+
+	const handleSignOut = async () => {
+		await supabase.auth.signOut()
+	}
 
 	const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault()
@@ -242,6 +282,18 @@ export default function App() {
 		)
 	}
 
+	if (isSessionLoading) {
+		return (
+			<div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-100">
+				<Loader2 className="size-5 animate-spin" />
+			</div>
+		)
+	}
+
+	if (!session) {
+		return <Auth />
+	}
+
 	return (
 		<div className={`theme min-h-screen font-sans transition-colors duration-300 ${isDark ? "dark bg-zinc-950 text-zinc-50" : "bg-zinc-100 text-zinc-900"}`}>
 			<div className="relative min-h-screen">
@@ -258,15 +310,25 @@ export default function App() {
 							<h1 className="mt-3 text-4xl font-semibold text-zinc-900 sm:text-5xl dark:text-white">Privacy-first Text-to-SQL chat</h1>
 							<p className="mt-3 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">Ask questions in plain language. QueryEase injects your live schema and runs safe, deterministic SQL on your PostgreSQL data.</p>
 						</div>
-						<div className="flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
-							<span className="font-medium">Theme</span>
-							<button type="button" role="switch" aria-checked={isDark} onClick={() => setIsDark((current) => !current)} className="relative flex h-8 w-14 items-center rounded-full border border-zinc-200 bg-white/80 p-1 shadow-sm transition-all duration-300 hover:shadow-md dark:border-zinc-800/80 dark:bg-zinc-900/70">
-								<Sun className="pointer-events-none absolute left-2 size-3 text-amber-500/80 transition-opacity duration-300 dark:opacity-0" />
-								<Moon className="pointer-events-none absolute right-2 size-3 text-zinc-300/80 opacity-0 transition-opacity duration-300 dark:opacity-100" />
-								<span className={`flex size-6 items-center justify-center rounded-full bg-white text-zinc-700 shadow transition-transform duration-300 ease-out dark:bg-zinc-900 dark:text-zinc-100 ${isDark ? "translate-x-6" : "translate-x-0"}`}>
-									{isDark ? <Moon className="size-3" /> : <Sun className="size-3" />}
-								</span>
-							</button>
+						<div className="flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+							<Button
+								type="button"
+								variant="ghost"
+								onClick={handleSignOut}
+								className="h-8 px-3 text-xs text-zinc-600 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800/70 dark:hover:text-white"
+							>
+								Sign Out
+							</Button>
+							<div className="flex items-center gap-3">
+								<span className="font-medium">Theme</span>
+								<button type="button" role="switch" aria-checked={isDark} onClick={() => setIsDark((current) => !current)} className="relative flex h-8 w-14 items-center rounded-full border border-zinc-200 bg-white/80 p-1 shadow-sm transition-all duration-300 hover:shadow-md dark:border-zinc-800/80 dark:bg-zinc-900/70">
+									<Sun className="pointer-events-none absolute left-2 size-3 text-amber-500/80 transition-opacity duration-300 dark:opacity-0" />
+									<Moon className="pointer-events-none absolute right-2 size-3 text-zinc-300/80 opacity-0 transition-opacity duration-300 dark:opacity-100" />
+									<span className={`flex size-6 items-center justify-center rounded-full bg-white text-zinc-700 shadow transition-transform duration-300 ease-out dark:bg-zinc-900 dark:text-zinc-100 ${isDark ? "translate-x-6" : "translate-x-0"}`}>
+										{isDark ? <Moon className="size-3" /> : <Sun className="size-3" />}
+									</span>
+								</button>
+							</div>
 						</div>
 					</header>
 
