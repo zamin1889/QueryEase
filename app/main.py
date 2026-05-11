@@ -56,9 +56,9 @@ def query_text_to_sql(
 
     while retry_count <= max_retries:
         try:
-            # Step A: Generate SQL
-            print(f"\n[DEBUG] --- ATTEMPT {retry_count} ---")
-            generated_sql = generate_sql(current_query, schema_context)
+            # Step A: Generate SQL using the specified provider
+            print(f"\n[DEBUG] --- ATTEMPT {retry_count} using {payload.provider.upper()} ---")
+            generated_sql = generate_sql(current_query, schema_context, payload.provider)
             print(f"[DEBUG] Generated SQL:\n{generated_sql}\n")
             
             # Step B: Sanitize

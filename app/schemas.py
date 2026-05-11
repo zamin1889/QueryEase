@@ -11,6 +11,7 @@ class QueryRequest(BaseModel):
         user_query: Natural language query text.
         session_id: Client session identifier.
         tenant_id: Tenant identifier for routing and auth context.
+        provider: Choice of LLM provider ('local' or 'nim').
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -18,6 +19,7 @@ class QueryRequest(BaseModel):
     user_query: str
     session_id: str
     tenant_id: str
+    provider: Literal["local", "nim"] = "local"
 
 
 class QuerySuccessResponse(BaseModel):
