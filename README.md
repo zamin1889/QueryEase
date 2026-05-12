@@ -1,39 +1,45 @@
-# QueryEase 🧠⚡
+# QueryEase
 
-**QueryEase** is an Agentic Text-to-SQL SaaS platform that allows users to interact with their PostgreSQL databases using natural language. By leveraging a hybrid Llama 3 architecture, QueryEase safely translates plain English into optimized SQL queries, executes them against the database, and returns actionable data.
+**QueryEase** is a privacy-first, Agentic Text-to-SQL SaaS platform. It enables non-technical users to interact with massive PostgreSQL databases using standard natural language. By utilizing a hybrid LLM architecture, QueryEase translates plain English into optimized, sanitized SQL queries, executes them against live infrastructure, and returns actionable data visualizations.
 
-## 🏗️ Architecture & Tech Stack
+## Architecture & Tech Stack
 
-This project is built as a monorepo containing a decoupled frontend and backend.
+This project is engineered as a highly decoupled monorepo.
 
-* **Frontend:** React (Vite) + Tailwind CSS + Shadcn UI
-* **Backend:** Python (FastAPI)
-* **Database:** Supabase (PostgreSQL)
-* **AI Engine:** Llama 3 (Hybrid Inference Approach)
+* **Frontend Environment:** React (Vite), Tailwind CSS, Shadcn UI, Recharts (Data Visualization)
+* **Backend Environment:** Python (FastAPI), Uvicorn, SQLAlchemy
+* **Database Infrastructure:** Supabase (PostgreSQL)
+* **AI Engine:** Dual-routing system supporting Local Edge Models (Ollama) and external Cloud APIs (Nvidia NIM).
 
-## ✨ Core Features
+## Core Features
 
-* **Agentic Text-to-SQL:** Understands user intent, fetches database schemas, and generates accurate SQL queries using Llama 3.
-* **Secure Execution:** Safely executes read-only (or sandboxed) queries against a Supabase PostgreSQL instance.
-* **Hybrid AI Pipeline:** Optimized routing for LLM inference ensuring speed, accuracy, and data privacy.
-* **Modern UI/UX:** Responsive, chat-driven interface built with React and Tailwind CSS.
+* **Agentic Schema Reflection:** The backend dynamically reads and understands live database schemas, requiring zero hardcoding when tables or columns change.
+* **Hybrid AI Pipeline:** Optimized toggle for LLM inference. Users can select "Cloud" for high-speed, complex reasoning or "Edge" for zero-trust data privacy running entirely on local hardware.
+* **Secure Execution Sandbox:** An aggressive middleware layer safely sanitizes all generated code, blocking destructive operations (`DROP`, `DELETE`, etc.) before they hit the database.
+* **Auto-Visualization:** The frontend heuristically analyzes the structure of incoming data arrays and automatically renders the optimal chart type (Pie, Bar, Area, or Table).
+* **Persistent Chat History:** Seamless session resumption powered by dynamic SQL re-execution and chunked data pagination.
 
-## 📂 Project Structure
+## MLOps Benchmark: Cloud vs. Edge
 
+We evaluated QueryEase on a 50-query golden dataset utilizing a "Zero-Shot Multi-Table Schema Resolution" test. Both the target tables (`global_superstore`, `spotify_tracks`) and the system tables (`chat_history`) were left active simultaneously to test the AI's ability to semantically route the prompt to the correct target without confusion.
 
-QueryEase/\
-├── backend/       # FastAPI server, AI agents, database connectors \
-├── frontend/      # Vite + React web application \
-├── README.md      # Project documentation \
-└── .gitignore     # Git ignore rules 
+| AI Engine (Parameters) | Target Dataset | Execution Success | Data Accuracy | Avg. Latency | Self-Healing Retries |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Nvidia NIM (70B)** | Superstore | 74.0% | 70.0% | 9.83s | 0.48 |
+| **Local Edge (8B)** | Superstore | 78.0% | 62.0% | 46.47s | 0.10 |
+| **Nvidia NIM (70B)** | Spotify | 96.0% | 90.0% | 10.62s | 0.34 |
+| **Local Edge (8B)** | Spotify | 74.0% | 66.0% | 39.01s | 0.08 |
 
+**Key Findings:** 1. **Cloud Architectures (70B)** excel at complex semantic routing and schema isolation but are highly vulnerable to API Rate Limits (429 errors), which accounted for 100% of their failures.
+2. **Edge Architectures (8B)** guarantee absolute data privacy and immunity from network rate limits. However, smaller parameter context windows require strict schema pruning to prevent cross-join hallucinations (e.g., the AI attempting to artificially join the Superstore and Spotify datasets together). Local processing also traded off ~30 seconds of latency per query compared to the cloud.
 
-## 🚀 Getting Started (Development)
+## Project Structure
 
-### Prerequisites
-* Python 3.10+
-* Node.js 18+
-* A Supabase account and project
-* Access to Llama 3 (via local Ollama, Groq, or cloud API)
-
-*(Detailed setup instructions for both backend and frontend will be added here as development progresses).*
+```text
+QueryEase/
+├── backend/       # FastAPI server, SQLAlchemy connectors, evaluation scripts
+├── frontend/      # Vite + React web application, Tailwind config
+├── README.md      # Platform overview and metrics
+├── ARCHITECTURE.md# System design and dataflow documentation
+├── PROGRESS.md    # SDLC lifecycle and future roadmap
+└── requirements.txt
