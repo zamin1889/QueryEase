@@ -3,6 +3,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.database import get_engine, get_live_schema, execute_query
 from app.llm import generate_sql
@@ -31,6 +32,55 @@ def health_check() -> dict[str, str]:
     """Return a basic health status payload."""
     return {"status": "healthy"}
 
+@app.get("/api/v1/history/{session_id}")
+def get_chat_history(session_id: str, limit: int = 10, offset: int = 0):
+    """Fetch past chat history with pagination and a safety cap on row counts."""
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            # Fetch one extra row to see if there is more history left
+            fetch_limit = limit + 1
+            result = conn.execute(
+                text("""
+                    SELECT user_query, generated_sql, chart_type 
+                    FROM chat_history 
+                    WHERE session_id = :session_id 
+                    ORDER BY created_at DESC 
+                    LIMIT :limit OFFSET :offset
+                """),
+                {"session_id": session_id, "limit": fetch_limit, "offset": offset}
+            )
+            rows = result.mappings().all()
+            
+            # Determine if there are more messages to load
+            has_more = len(rows) > limit
+            
+            # Slice off the extra row and reverse the list so it displays chronologically
+            display_rows = rows[:limit][::-1]
+            
+            history = []
+            for row in display_rows:
+                data_rows = []
+                try:
+                    # RIGOROUS FIX: Append a LIMIT 100 to the past SQL
+                    base_sql = row["generated_sql"].rstrip(";")
+                    limited_sql = f"SELECT * FROM ({base_sql}) AS subquery LIMIT 100"
+                    
+                    data_rows = execute_query(engine, limited_sql)
+                except Exception as query_exc:
+                    print(f"[DEBUG] History re-execution failed: {query_exc}")
+                    
+                history.append({
+                    "user_query": row["user_query"],
+                    "generated_sql": row["generated_sql"],
+                    "chart_type": row["chart_type"] or "table",
+                    "data": data_rows
+                })
+            return {"status": "success", "history": history, "has_more": has_more}
+    except Exception as e:
+        print(f"[DEBUG] History fetch error: {e}")
+        return {"status": "error", "history": [], "has_more": False}
+
 @app.post(
     "/api/v1/query",
     response_model=QuerySuccessResponse,
@@ -56,7 +106,7 @@ def query_text_to_sql(
 
     while retry_count <= max_retries:
         try:
-            # Step A: Generate SQL using the specified provider
+            # Step A: Generate SQL
             print(f"\n[DEBUG] --- ATTEMPT {retry_count} using {payload.provider.upper()} ---")
             generated_sql = generate_sql(current_query, schema_context, payload.provider)
             print(f"[DEBUG] Generated SQL:\n{generated_sql}\n")
@@ -79,6 +129,28 @@ def query_text_to_sql(
             # Step C: Execute Query Against Supabase
             results = execute_query(engine, safe_sql)
             print(f"[DEBUG] Query Execution Successful! Rows returned: {len(results)}")
+
+            # --- NEW: Securely commit chat history to database ---
+            try:
+                with engine.begin() as conn: # engine.begin() acts as a transaction that auto-commits
+                    conn.execute(
+                        text("""
+                        INSERT INTO chat_history 
+                        (session_id, tenant_id, user_query, generated_sql, chart_type, execution_time_ms)
+                        VALUES (:session_id, :tenant_id, :user_query, :generated_sql, :chart_type, :execution_time_ms)
+                        """),
+                        {
+                            "session_id": payload.session_id,
+                            "tenant_id": payload.tenant_id,
+                            "user_query": payload.user_query,
+                            "generated_sql": safe_sql,
+                            "chart_type": "table",
+                            "execution_time_ms": 0
+                        }
+                    )
+            except Exception as e:
+                print(f"[DEBUG] Failed to save chat history: {e}")
+            # -----------------------------------------------------
 
             # Step D: Return Actual Data
             return QuerySuccessResponse(

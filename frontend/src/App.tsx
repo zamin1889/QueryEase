@@ -1,6 +1,6 @@
 import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react"
 import axios from "axios"
-import { Loader2, Moon, Send, Sun, BarChart3 } from "lucide-react"
+import { Loader2, Moon, Send, Sun, BarChart3, History } from "lucide-react"
 import {
     Area,
     AreaChart,
@@ -8,8 +8,6 @@ import {
     BarChart,
     CartesianGrid,
     Cell,
-    Line,
-    LineChart,
     Pie,
     PieChart,
     ResponsiveContainer,
@@ -67,7 +65,6 @@ const formatCellValue = (value: unknown) => {
     return String(value)
 }
 
-// Custom Glassmorphic Tooltip for Recharts
 const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
         return (
@@ -87,11 +84,34 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function App() {
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
     const [draft, setDraft] = useState("")
-    const [isDark, setIsDark] = useState(false)
     const [isSending, setIsSending] = useState(false)
     const [session, setSession] = useState<Session | null>(null)
     const [isSessionLoading, setIsSessionLoading] = useState(true)
-    const [provider, setProvider] = useState<"local" | "nim">("local") // Added provider state
+    
+    // Pagination States
+    const [isHistoryLoaded, setIsHistoryLoaded] = useState(false)
+    const [isLoadingMore, setIsLoadingMore] = useState(false)
+    const [offset, setOffset] = useState(0)
+    const [hasMore, setHasMore] = useState(false)
+    const limit = 10
+
+    const [provider, setProvider] = useState<"local" | "nim">("local")
+    const [isDark, setIsDark] = useState(() => {
+        if (typeof window !== "undefined") {
+            return localStorage.getItem("queryease_theme") === "dark"
+        }
+        return false
+    })
+
+    useEffect(() => {
+        if (isDark) {
+            document.documentElement.classList.add("dark")
+            localStorage.setItem("queryease_theme", "dark")
+        } else {
+            document.documentElement.classList.remove("dark")
+            localStorage.setItem("queryease_theme", "light")
+        }
+    }, [isDark])
 
     const sessionIdRef = useRef(
         typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -130,8 +150,79 @@ export default function App() {
         }
     }, [])
 
+    const fetchHistory = async (currentOffset: number, isLoadMore = false) => {
+        const userId = session?.user?.id;
+        if (!userId) return
+
+        if (isLoadMore) setIsLoadingMore(true)
+
+        try {
+            const apiBaseUrl = import.meta.env.VITE_API_URL
+            if (!apiBaseUrl) return
+
+            const response = await axios.get(`${apiBaseUrl}/api/v1/history/${userId}?limit=${limit}&offset=${currentOffset}`, {
+                headers: {
+                    "ngrok-skip-browser-warning": "true"
+                }
+            })
+            
+            setHasMore(response.data.has_more)
+            
+            if (response.data?.history && response.data.history.length > 0) {
+                const loadedMessages: ChatMessage[] = []
+                
+                response.data.history.forEach((item: any, i: number) => {
+                    loadedMessages.push({
+                        id: `history-user-${currentOffset}-${i}`,
+                        role: "user",
+                        content: item.user_query
+                    })
+                    loadedMessages.push({
+                        id: `history-assistant-${currentOffset}-${i}`,
+                        role: "assistant",
+                        content: item.data && item.data.length 
+                            ? "Here is the visualization of your past data." 
+                            : "Historical query loaded.",
+                        generated_sql: item.generated_sql,
+                        data: item.data,
+                        chart_type: item.chart_type
+                    })
+                })
+                
+                if (isLoadMore) {
+                    // Prepend older messages to the top
+                    setMessages(prev => [...loadedMessages, ...prev])
+                } else {
+                    // Initial load: Welcome message + first page of history
+                    setMessages([...initialMessages, ...loadedMessages])
+                }
+            }
+        } catch (error) {
+            console.error("[QueryEase] Failed to fetch chat history:", error)
+        } finally {
+            setIsHistoryLoaded(true)
+            setIsLoadingMore(false)
+        }
+    }
+
+    // Initial History Load
+    useEffect(() => {
+        if (!session?.user?.id || isHistoryLoaded) return
+        fetchHistory(0)
+    }, [session?.user?.id, isHistoryLoaded])
+
+    const handleLoadMore = () => {
+        const nextOffset = offset + limit
+        setOffset(nextOffset)
+        fetchHistory(nextOffset, true)
+    }
+
     const handleSignOut = async () => {
         await supabase.auth.signOut()
+        setMessages(initialMessages)
+        setIsHistoryLoaded(false)
+        setOffset(0)
+        setHasMore(false)
     }
 
     const handleSendMessage = async (event: FormEvent<HTMLFormElement>) => {
@@ -151,34 +242,25 @@ export default function App() {
 
         try {
             const apiBaseUrl = import.meta.env.VITE_API_URL
-            if (!apiBaseUrl) {
-                throw new Error("VITE_API_URL is not configured.")
-            }
+            if (!apiBaseUrl) throw new Error("VITE_API_URL is not configured.")
 
             const response = await axios.post<QuerySuccessResponse>(
                 `${apiBaseUrl}/api/v1/query`,
                 {
                     user_query: trimmed,
-                    session_id: sessionIdRef.current,
-                    tenant_id: tenantId,
-                    provider: provider, // Inject provider choice
+                    session_id: session?.user?.id || sessionIdRef.current,
+                    tenant_id: session?.user?.id || tenantId,
+                    provider: provider,
+                },
+                {
+                    headers: {
+                        "ngrok-skip-browser-warning": "true"
+                    }
                 }
             )
 
             const payload = response.data
-
-            if (!payload) {
-                throw new Error("No response payload returned by the API.")
-            }
-
-            // Determine if it should be a chart based on the AI's inference and data structure
-            let finalChartType = payload.inferred_chart_type
-            const hasNumericData = payload.data?.some(row => 
-                Object.values(row).some(val => typeof val === 'number')
-            )
-            if (hasNumericData && finalChartType === "table") {
-                finalChartType = "area" // Force a beautiful chart if numbers are present!
-            }
+            if (!payload) throw new Error("No response payload returned by the API.")
 
             const aiMessage: ChatMessage = {
                 id: `assistant-${Date.now()}`,
@@ -188,18 +270,14 @@ export default function App() {
                     : "Query executed successfully.",
                 generated_sql: payload.generated_sql,
                 data: payload.data,
-                chart_type: finalChartType,
+                chart_type: payload.inferred_chart_type,
             }
 
             setMessages((current) => [...current, aiMessage])
         } catch (error) {
             const message = axios.isAxiosError(error)
-                ? error.response?.data?.error_message ??
-                        error.response?.data?.detail?.error_message ??
-                        error.message
-                : error instanceof Error
-                    ? error.message
-                    : "Unexpected error."
+                ? error.response?.data?.error_message ?? error.response?.data?.detail?.error_message ?? error.message
+                : error instanceof Error ? error.message : "Unexpected error."
 
             setMessages((current) => [
                 ...current,
@@ -244,12 +322,8 @@ export default function App() {
             </div>
         )
 
-        if (msg.data.length > 50) return tableView
-
-        const chartWrapperClass =
-            "mt-3 h-56 w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-white/80 p-3 shadow-sm backdrop-blur-md dark:border-zinc-700/70 dark:bg-zinc-900/70"
-
         const columns = Object.keys(msg.data[0])
+        if (msg.data.length > 50 || columns.length < 2) return tableView
 
         const toNumber = (value: unknown) => {
             if (value === null || value === undefined) return NaN
@@ -265,27 +339,41 @@ export default function App() {
         )
         const stringColumns = columns.filter((column) => !numericColumns.includes(column))
 
-        if (numericColumns.length === 0 || stringColumns.length === 0) return tableView
-        
-        const yAxisKey = numericColumns[0]
-        const xAxisKey = stringColumns[0]
+        if (numericColumns.length === 0) return tableView
+
+        let xAxisKey = columns[0]
+        let yAxisKey = numericColumns[0]
+
+        if (stringColumns.length > 0) {
+            xAxisKey = stringColumns[0]
+            const potentialY = numericColumns.find(c => c !== xAxisKey)
+            if (potentialY) yAxisKey = potentialY
+        } else if (numericColumns.length >= 2) {
+            xAxisKey = numericColumns[0]
+            yAxisKey = numericColumns[1]
+        } else {
+            return tableView
+        }
 
         const chartData = msg.data.map((row) => ({
             ...row,
             [yAxisKey]: toNumber(row[yAxisKey]),
+            [xAxisKey]: String(row[xAxisKey] ?? ""),
         }))
 
-        if (msg.data.length <= 5 && numericColumns.length === 1 && stringColumns.length === 1 && columns.length === 2) {
-            const pieColors = ["#0ea5e9", "#14b8a6", "#f97316", "#f43f5e", "#a855f7", "#22c55e"]
+        const chartWrapperClass =
+            "mt-3 h-64 w-full overflow-hidden rounded-2xl border border-zinc-200/80 bg-white/60 p-4 pt-6 shadow-sm backdrop-blur-md dark:border-zinc-700/70 dark:bg-zinc-900/40"
 
+        if (msg.data.length <= 5) {
+            const pieColors = ["#0ea5e9", "#14b8a6", "#f97316", "#f43f5e", "#a855f7", "#22c55e"]
             return (
                 <div className={chartWrapperClass}>
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <RechartsTooltip content={<CustomTooltip />} />
-                            <Pie data={chartData} dataKey={yAxisKey} nameKey={xAxisKey} cx="50%" cy="50%" outerRadius={80}>
+                            <Pie data={chartData} dataKey={yAxisKey} nameKey={xAxisKey} cx="50%" cy="50%" innerRadius={40} outerRadius={80}>
                                 {chartData.map((entry, index) => (
-                                    <Cell key={`cell-${String(entry[xAxisKey])}-${index}`} fill={pieColors[index % pieColors.length]} />
+                                    <Cell key={`cell-${index}`} fill={pieColors[index % pieColors.length]} />
                                 ))}
                             </Pie>
                         </PieChart>
@@ -303,36 +391,32 @@ export default function App() {
                             <XAxis dataKey={xAxisKey} axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" dy={10} />
                             <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" />
                             <RechartsTooltip content={<CustomTooltip />} />
-                            <Bar dataKey={yAxisKey} fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+                            <Bar dataKey={yAxisKey} fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={30} />
                         </BarChart>
                     </ResponsiveContainer>
                 </div>
             )
         }
 
-        if (msg.data.length > 15 && msg.data.length <= 50) {
-            return (
-                <div className={chartWrapperClass}>
-                    <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                            <defs>
-                                <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.4} />
-                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                                </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" />
-                            <XAxis dataKey={xAxisKey} axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" dy={10} />
-                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" />
-                            <RechartsTooltip content={<CustomTooltip />} />
-                            <Area type="monotone" dataKey={yAxisKey} stroke="#0ea5e9" strokeWidth={3} fillOpacity={1} fill="url(#colorGradient)" />
-                        </AreaChart>
-                    </ResponsiveContainer>
-                </div>
-            )
-        }
-
-        return tableView
+        return (
+            <div className={chartWrapperClass}>
+                <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                        <defs>
+                            <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.4} />
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                            </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" />
+                        <XAxis dataKey={xAxisKey} axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12 }} className="text-zinc-500" />
+                        <RechartsTooltip content={<CustomTooltip />} />
+                        <Area type="monotone" dataKey={yAxisKey} stroke="#0ea5e9" strokeWidth={3} fillOpacity={1} fill="url(#colorGradient)" />
+                    </AreaChart>
+                </ResponsiveContainer>
+            </div>
+        )
     }
 
     if (isSessionLoading) {
@@ -350,7 +434,6 @@ export default function App() {
     return (
         <div className={`theme min-h-screen font-sans transition-colors duration-300 ${isDark ? "dark bg-zinc-950 text-zinc-50" : "bg-zinc-100 text-zinc-900"}`}>
             <div className="relative min-h-screen">
-                {/* ... Background gradients omitted for brevity, keeping your exact same background ... */}
                 <div className="pointer-events-none absolute inset-0">
                     <div className={`absolute inset-0 bg-[radial-gradient(900px_circle_at_20%_10%,rgba(251,146,60,0.18),transparent_60%),radial-gradient(850px_circle_at_85%_0%,rgba(251,113,133,0.14),transparent_55%),linear-gradient(180deg,rgba(244,238,230,0.96),rgba(250,248,245,0.96))] transition-opacity duration-700 ${isDark ? "opacity-0" : "opacity-100"}`} />
                     <div className={`absolute inset-0 bg-[radial-gradient(900px_circle_at_20%_0%,rgba(251,146,60,0.14),transparent_55%),radial-gradient(800px_circle_at_85%_-10%,rgba(251,113,133,0.12),transparent_45%),linear-gradient(180deg,rgba(9,9,11,0.98),rgba(24,24,27,0.96))] transition-opacity duration-700 ${isDark ? "opacity-100" : "opacity-0"}`} />
@@ -373,7 +456,6 @@ export default function App() {
                                 Sign Out
                             </Button>
                             
-                            {/* EDGE / CLOUD TOGGLE */}
                             <div className="mr-2 flex items-center gap-3 border-r border-zinc-200 pr-4 dark:border-zinc-800">
                                 <button
                                     type="button"
@@ -422,14 +504,31 @@ export default function App() {
                     <main className="flex min-h-0 flex-1 flex-col gap-6">
                         <ScrollArea className="flex-1 rounded-3xl border border-zinc-100 bg-white/70 shadow-sm backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md dark:border-zinc-800/80 dark:bg-zinc-950/70 dark:shadow-[0_0_30px_rgba(251,146,60,0.12)]">
                             <div className="flex flex-col gap-4 p-6">
+                                
+                                {/* LOAD PREVIOUS BUTTON */}
+                                {hasMore && (
+                                    <div className="flex justify-center mb-4">
+                                        <Button 
+                                            variant="outline" 
+                                            size="sm" 
+                                            onClick={handleLoadMore} 
+                                            disabled={isLoadingMore}
+                                            className="rounded-full bg-white/80 dark:bg-zinc-900/80 shadow-sm text-zinc-600 dark:text-zinc-300 text-xs border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                                        >
+                                            {isLoadingMore ? <Loader2 className="mr-2 size-3 animate-spin" /> : <History className="mr-2 size-3" />}
+                                            Load Previous 10 Queries
+                                        </Button>
+                                    </div>
+                                )}
+
                                 {messages.map((msg) => {
                                     const isUser = msg.role === "user"
                                     const hasData = !isUser && Array.isArray(msg.data)
                                     
                                     return (
                                         <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                                            <div className={`flex w-full max-w-[85%] flex-col gap-3 ${isUser ? "items-end" : "items-start"}`}>
-                                                <div className={`max-w-[85%] w-full rounded-2xl border px-4 py-3 text-sm leading-relaxed shadow-sm transition-transform duration-300 hover:-translate-y-0.5 ${isUser ? "border-zinc-200 bg-zinc-100/80 text-zinc-700 dark:border-zinc-700/70 dark:bg-zinc-800/70 dark:text-zinc-100" : "border-zinc-100 bg-white/90 text-zinc-800 dark:border-zinc-800/80 dark:bg-zinc-900/70 dark:text-zinc-100"}`}>
+                                            <div className={`flex w-full max-w-[85%] min-w-0 flex-col gap-3 ${isUser ? "items-end" : "items-start"}`}>
+                                                <div className={`w-full min-w-0 rounded-2xl border px-4 py-3 text-sm leading-relaxed shadow-sm transition-transform duration-300 hover:-translate-y-0.5 ${isUser ? "border-zinc-200 bg-zinc-100/80 text-zinc-700 dark:border-zinc-700/70 dark:bg-zinc-800/70 dark:text-zinc-100" : "border-zinc-100 bg-white/90 text-zinc-800 dark:border-zinc-800/80 dark:bg-zinc-900/70 dark:text-zinc-100"}`}>
                                                     <p className="text-[0.65rem] uppercase tracking-[0.3em] text-zinc-400 dark:text-zinc-500 flex items-center gap-2">
                                                         {isUser ? "You" : <><BarChart3 className="size-3"/> Assistant</>}
                                                     </p>
@@ -440,7 +539,7 @@ export default function App() {
                                                             <summary className="cursor-pointer text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 outline-none">
                                                                 View Generated SQL
                                                             </summary>
-                                                            <pre className="mt-2 whitespace-pre-wrap rounded-xl border border-zinc-200/80 bg-zinc-50/80 p-3 text-xs text-zinc-600 dark:border-zinc-700/70 dark:bg-zinc-950/50 dark:text-zinc-300">
+                                                            <pre className="mt-2 whitespace-pre-wrap overflow-x-auto rounded-xl border border-zinc-200/80 bg-zinc-50/80 p-3 text-xs text-zinc-600 dark:border-zinc-700/70 dark:bg-zinc-950/50 dark:text-zinc-300">
                                                                 {msg.generated_sql}
                                                             </pre>
                                                         </details>
